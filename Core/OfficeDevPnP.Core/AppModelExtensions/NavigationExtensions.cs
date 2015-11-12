@@ -183,14 +183,11 @@ namespace Microsoft.SharePoint.Client
 				throw new ArgumentException("Structural navigation settings are only supported for publishing sites");
 			}
 
-			TaxonomySession taxonomySession = null;
-			if (navigationSettings.GlobalNavigation.ManagedNavigation || navigationSettings.CurrentNavigation.ManagedNavigation)
-			{
-				// Use publishing CSOM API to switch between managed metadata and structural navigation
-				taxonomySession = TaxonomySession.GetTaxonomySession(web.Context);
-				web.Context.Load(taxonomySession);
-				web.Context.ExecuteQueryRetry();
-			}
+			// Use publishing CSOM API to switch between managed metadata and structural navigation
+			var taxonomySession = TaxonomySession.GetTaxonomySession(web.Context);
+			web.Context.Load(taxonomySession);
+			web.Context.ExecuteQueryRetry();
+
 			Microsoft.SharePoint.Client.Publishing.Navigation.WebNavigationSettings webNav = new Publishing.Navigation.WebNavigationSettings(web.Context, web);
 			if (navigationSettings.GlobalNavigation.UseParentSiteMap)
 			{
@@ -223,10 +220,7 @@ namespace Microsoft.SharePoint.Client
 					webNav.CurrentNavigation.Source = Publishing.Navigation.StandardNavigationSource.TaxonomyProvider;
 				}
 			}
-			if (taxonomySession != null)
-			{
-				webNav.Update(taxonomySession);
-			}
+			webNav.Update(taxonomySession);
 			web.Context.ExecuteQueryRetry();
 
 			//Read all the properties of the web again after the above update
