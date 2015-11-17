@@ -58,6 +58,12 @@
     <DocumentationFile>bin\Release15\OfficeDevPnP.Core.XML</DocumentationFile>
     <NoWarn>1591</NoWarn>
   </PropertyGroup>
+  <PropertyGroup>
+    <SignAssembly>true</SignAssembly>
+  </PropertyGroup>
+  <PropertyGroup>
+    <AssemblyOriginatorKeyFile>ITaCS.pfx</AssemblyOriginatorKeyFile>
+  </PropertyGroup>
   <Choose>
     <When Condition=" '$(Configuration)' == 'debug' Or '$(Configuration)' == 'release' ">
       <ItemGroup>
@@ -546,6 +552,7 @@
       <SubType>Designer</SubType>
     </EmbeddedResource>
     <None Include="Framework\Provisioning\Providers\Xml\readme.md" />
+    <None Include="ITaCS.pfx" />
     <None Include="packages.config" />
     <None Include="Properties\Settings.settings">
       <Generator>SettingsSingleFileGenerator</Generator>
@@ -661,6 +668,10 @@
   </Target>
   <Target Name="AfterBuild" DependsOnTargets="">
   </Target>
+  <PropertyGroup>
+    <PostBuildEvent>copy "$(TargetPath)" "D:\_Projects\ITaCS\Deployment\YadaOnline\Slow\3rd Party Assemblies"
+copy "$(TargetDir)\*.pdb" "D:\_Projects\ITaCS\Deployment\YadaOnline\Slow\3rd Party Assemblies"</PostBuildEvent>
+  </PropertyGroup>
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
        Other similar extension points exist, see Microsoft.Common.targets.
   <Target Name="BeforeBuild">
