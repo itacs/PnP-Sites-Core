@@ -729,7 +729,7 @@ namespace Microsoft.SharePoint.Client
         public static ThemeEntity GetComposedLook(this Web web, string composedLookName)
         {
             // List of OOB composed looks
-            List<string> defaultComposedLooks = new List<string>(new string[] { "Orange", "Sea Monster", "Green", "Lime", "Nature", "Blossom", "Sketch", "City", "Orbit", "Grey", "Characters", "Office", "Breeze", "Immerse", "Red", "Purple", "Wood" });
+            //List<string> defaultComposedLooks = new List<string>(new string[] { "Orange", "Sea Monster", "Green", "Lime", "Nature", "Blossom", "Sketch", "City", "Orbit", "Grey", "Characters", "Office", "Breeze", "Immerse", "Red", "Purple", "Wood" });
 
             // ThemeEntity object that will be 
             ThemeEntity theme = null;
@@ -743,11 +743,13 @@ namespace Microsoft.SharePoint.Client
                    <FieldRef Name='Modified' />
                 </OrderBy>
                 <ViewFields>
+                    <FieldRef Name='ID' />
                     <FieldRef Name='Name' />
                     <FieldRef Name='ImageUrl' />
                     <FieldRef Name='MasterPageUrl' />
                     <FieldRef Name='FontSchemeUrl' />
                     <FieldRef Name='ThemeUrl' />
+                    <FieldRef Name='DisplayOrder' />
                 </ViewFields> 
             </View>";
 
@@ -781,7 +783,10 @@ namespace Microsoft.SharePoint.Client
                     string imageUrl = null;
                     string fontUrl = null;
                     string name = null;
+                    int displayOrder = -1;
+                    int id = -1;
 
+                    id = themeItem.Id;
                     if (themeItem["MasterPageUrl"] != null && themeItem["MasterPageUrl"].ToString().Length > 0)
                     {
                         masterPageUrl = (themeItem["MasterPageUrl"] as FieldUrlValue).Url;
@@ -802,16 +807,20 @@ namespace Microsoft.SharePoint.Client
                     {
                         name = themeItem["Name"] as String;
                     }
+                    if (themeItem["DisplayOrder"] != null)
+                    {
+                        displayOrder = Convert.ToInt32(themeItem["DisplayOrder"]);
+                    }
 
                     if (name != null)
                     {
-                        if (!name.Equals(CurrentLookName, StringComparison.InvariantCultureIgnoreCase) &&
-                            !defaultComposedLooks.Contains(name))
+                        if (id > 18 && displayOrder > 0) // initially 17 default templates (+ current), current theme display order is 0
                         {
                             customComposedLooks.Add(name);
                         }
 
-                        if (name.Equals(composedLookName, StringComparison.InvariantCultureIgnoreCase))
+                        if (name.Equals(composedLookName, StringComparison.InvariantCultureIgnoreCase) || 
+                            (composedLookName.Equals(CurrentLookName, StringComparison.InvariantCultureIgnoreCase) && displayOrder == 0)) // if looking for "Current" (can be anything in other language), take the theme with display order 0
                         {
                             theme = new ThemeEntity();
                             if (themeItem["ThemeUrl"] != null && themeItem["ThemeUrl"].ToString().Length > 0)
@@ -863,7 +872,9 @@ namespace Microsoft.SharePoint.Client
                         string imageUrl = null;
                         string fontUrl = null;
                         string name = "";
+                        int displayOrder = -1;
 
+                        int id = themeItem.Id;
                         if (themeItem["MasterPageUrl"] != null && themeItem["MasterPageUrl"].ToString().Length > 0)
                         {
                             masterPageUrl = System.Net.WebUtility.UrlDecode((themeItem["MasterPageUrl"] as FieldUrlValue).Url);
@@ -884,12 +895,18 @@ namespace Microsoft.SharePoint.Client
                         {
                             name = themeItem["Name"] as String;
                         }
+                        if (themeItem["DisplayOrder"] != null)
+                        {
+                            displayOrder = Convert.ToInt32(themeItem["DisplayOrder"]);
+                        }
 
                         // Note: do not take in account the ImageUrl field as this will point to a copied image in case of a sub site
                         if (IsMatchingTheme(theme, masterPageUrl, themeUrl, fontUrl))
                         {
                             theme.Name = name;
-                            theme.IsCustomComposedLook = !defaultComposedLooks.Contains(theme.Name);
+                            //theme.IsCustomComposedLook = !defaultComposedLooks.Contains(theme.Name);
+                            theme.IsCustomComposedLook = id > 18;
+                            theme.DisplayOrder = displayOrder;
 
                             // Restore the default composed look image url
                             if (imageUrl != null)
@@ -934,7 +951,7 @@ namespace Microsoft.SharePoint.Client
                                         theme.Name = themeItem["Name"] as String;
                                     }
 
-                                    theme.IsCustomComposedLook = true;
+                                    theme.IsCustomComposedLook = themeItem.Id > 18;
                                     break;
                                 }
                             }
@@ -954,7 +971,7 @@ namespace Microsoft.SharePoint.Client
             // If name still is "Current" and there isn't a PreviewThemedCssFolderUrl 
             // property in the property bag then we can't correctly determine the set 
             // composed look...so return null
-            if (!string.IsNullOrEmpty(theme.Name) && theme.Name.Equals(CurrentLookName, StringComparison.InvariantCultureIgnoreCase)
+            if (((!string.IsNullOrEmpty(theme.Name) && theme.Name.Equals(CurrentLookName, StringComparison.InvariantCultureIgnoreCase)) || theme.DisplayOrder == 0)
                 && String.IsNullOrEmpty(designPreviewThemedCssFolderUrl))
             {
                 return null;
