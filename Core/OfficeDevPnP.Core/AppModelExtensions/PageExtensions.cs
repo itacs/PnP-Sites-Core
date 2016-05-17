@@ -8,6 +8,11 @@ using Microsoft.SharePoint.Client.Utilities;
 using Microsoft.SharePoint.Client.WebParts;
 using OfficeDevPnP.Core;
 using OfficeDevPnP.Core.Entities;
+using System.Linq;
+using System.Net;
+using System.IO;
+using System.Text;
+using OfficeDevPnP.Core.Utilities;
 
 namespace Microsoft.SharePoint.Client
 {
@@ -71,8 +76,21 @@ namespace Microsoft.SharePoint.Client
             File file = web.GetFileByServerRelativeUrl(serverRelativePageUrl);
             LimitedWebPartManager limitedWebPartManager = file.GetLimitedWebPartManager(PersonalizationScope.Shared);
 
-            var query = web.Context.LoadQuery(limitedWebPartManager.WebParts.IncludeWithDefaultProperties(wp => wp.Id, wp => wp.WebPart, wp => wp.WebPart.Title, wp => wp.WebPart.Properties, wp => wp.WebPart.Hidden));
+            IEnumerable<WebPartDefinition> query = null;
 
+#if CLIENTSDKV15
+            // As long as we've no CSOM library that has the ZoneID we can't use the version check as things don't compile...
+            query = web.Context.LoadQuery(limitedWebPartManager.WebParts.IncludeWithDefaultProperties(wp => wp.Id, wp => wp.WebPart, wp => wp.WebPart.Title, wp => wp.WebPart.Properties, wp => wp.WebPart.Hidden));
+#else
+            if (web.Context.HasMinimalServerLibraryVersion(Constants.MINIMUMZONEIDREQUIREDSERVERVERSION))
+            {
+                query = web.Context.LoadQuery(limitedWebPartManager.WebParts.IncludeWithDefaultProperties(wp => wp.Id, wp => wp.ZoneId, wp => wp.WebPart, wp => wp.WebPart.Title, wp => wp.WebPart.Properties, wp => wp.WebPart.Hidden));
+            }
+            else
+            {
+                query = web.Context.LoadQuery(limitedWebPartManager.WebParts.IncludeWithDefaultProperties(wp => wp.Id, wp => wp.WebPart, wp => wp.WebPart.Title, wp => wp.WebPart.Properties, wp => wp.WebPart.Hidden));
+            }
+#endif
             web.Context.ExecuteQueryRetry();
 
             return query;
@@ -226,8 +244,7 @@ namespace Microsoft.SharePoint.Client
                 return;
             }
 
-            web.Context.Load(webPartPage);
-            web.Context.Load(webPartPage.ListItemAllFields);
+            web.Context.Load(webPartPage, wp => wp.ListItemAllFields);
             web.Context.ExecuteQueryRetry();
 
             string wikiField = (string)webPartPage.ListItemAllFields["WikiField"];
@@ -285,7 +302,7 @@ namespace Microsoft.SharePoint.Client
             //</div>
 
             // Close all BR tags
-            Regex brRegex = new Regex("<br>",RegexOptions.IgnoreCase);
+            Regex brRegex = new Regex("<br>", RegexOptions.IgnoreCase);
 
             wikiField = brRegex.Replace(wikiField, "<br/>");
 
@@ -349,14 +366,71 @@ namespace Microsoft.SharePoint.Client
 
         }
 
-        /// <summary>
-        /// Applies a layout to a wiki page
-        /// </summary>
-        /// <param name="web">Site to be processed - can be root web or sub site</param>
-        /// <param name="layout">Wiki page layout to be applied</param>
-        /// <param name="serverRelativePageUrl"></param>
-        /// <exception cref="System.ArgumentException">Thrown when serverRelativePageUrl is a zero-length string or contains only white space</exception>
-        /// <exception cref="System.ArgumentNullException">Thrown when serverRelativePageUrl is null</exception>
+        public static string GetWebPartXml(this Web web, Guid webPartId, string serverRelativePageUrl)
+        {
+
+            string webPartXml = null;
+
+            Guid id = Guid.Empty;
+
+            var wp = web.GetWebParts(serverRelativePageUrl).FirstOrDefault(wps => wps.Id == webPartId);
+            if (wp != null)
+            {
+                id = wp.Id;
+            }
+            else
+            {
+                return null;
+            }
+
+
+            if (id != Guid.Empty)
+            {
+                var uri = new Uri(web.Context.Url);
+                var serverRelativeUrl = web.EnsureProperty(w => w.ServerRelativeUrl);
+                var hostUri = uri.Host;
+                var webUrl = string.Format("{0}://{1}{2}", uri.Scheme, uri.Host, serverRelativeUrl);
+                var pageUrl = string.Format("{0}://{1}{2}", uri.Scheme, uri.Host, serverRelativePageUrl);
+                var request = (HttpWebRequest)WebRequest.Create(string.Format("{0}/_vti_bin/exportwp.aspx?pageurl={1}&guidstring={2}", webUrl, pageUrl, id.ToString()));
+
+#if CLIENTSDKV15
+                request.Credentials = web.Context.Credentials;
+#else
+                var credentials = web.Context.Credentials as SharePointOnlineCredentials;
+                var authCookieValue = credentials.GetAuthenticationCookie(uri);
+
+                Cookie fedAuth = new Cookie()
+                {
+                    Name = "SPOIDCRL",
+                    Value = authCookieValue.TrimStart("SPOIDCRL=".ToCharArray()),
+                    Path = "/",
+                    Secure = true,
+                    HttpOnly = true,
+                    Domain = uri.Host
+                };
+                request.CookieContainer = new CookieContainer();
+                request.CookieContainer.Add(fedAuth);
+#endif
+
+                var response = request.GetResponse();
+                using (Stream stream = response.GetResponseStream())
+                {
+                    StreamReader reader = new StreamReader(stream, Encoding.UTF8);
+                    webPartXml = reader.ReadToEnd();
+                }
+            }
+
+            return webPartXml;
+        }
+
+                /// <summary>
+                /// Applies a layout to a wiki page
+                /// </summary>
+                /// <param name="web">Site to be processed - can be root web or sub site</param>
+                /// <param name="layout">Wiki page layout to be applied</param>
+                /// <param name="serverRelativePageUrl"></param>
+                /// <exception cref="System.ArgumentException">Thrown when serverRelativePageUrl is a zero-length string or contains only white space</exception>
+                /// <exception cref="System.ArgumentNullException">Thrown when serverRelativePageUrl is null</exception>
         public static void AddLayoutToWikiPage(this Web web, WikiPageLayout layout, string serverRelativePageUrl)
         {
             if (string.IsNullOrEmpty(serverRelativePageUrl))
@@ -755,6 +829,59 @@ namespace Microsoft.SharePoint.Client
         /// <exception cref="System.ArgumentNullException">Thrown when wikiPageLibraryName or wikiPageName is null</exception>
         public static string AddWikiPage(this Web web, string wikiPageLibraryName, string wikiPageName)
         {
+            string wikiPageUrl, newWikiPageUrl, pathAndQuery;
+            List pageLibrary;
+            File currentPageFile;
+
+            WikiPageImplementation(web, wikiPageLibraryName, wikiPageName, out wikiPageUrl, out pageLibrary, out newWikiPageUrl, out currentPageFile, out pathAndQuery);
+
+            if (!currentPageFile.Exists)
+            {
+                var newpage = pageLibrary.RootFolder.Files.AddTemplateFile(newWikiPageUrl, TemplateFileType.WikiPage);
+                web.Context.Load(newpage);
+                web.Context.ExecuteQueryRetry();
+                wikiPageUrl = newpage.ServerRelativeUrl.Replace(pathAndQuery, "");
+            }
+
+            return wikiPageUrl;
+        }
+
+        /// <summary>
+        /// Returns the Url for the requested wiki page, creates it if the pageis not yet available
+        /// </summary>
+        /// <param name="web">Site to be processed - can be root web or sub site</param>
+        /// <param name="wikiPageLibraryName">Name of the wiki page library</param>
+        /// <param name="wikiPageName">Wiki page to operate on</param>
+        /// <returns>The relative URL of the added wiki page</returns>
+        /// <exception cref="System.ArgumentException">Thrown when wikiPageLibraryName or wikiPageName is a zero-length string or contains only white space</exception>
+        /// <exception cref="System.ArgumentNullException">Thrown when wikiPageLibraryName or wikiPageName is null</exception>
+        public static string EnsureWikiPage(this Web web, string wikiPageLibraryName, string wikiPageName)
+        {
+            string wikiPageUrl, newWikiPageUrl, pathAndQuery;
+            List pageLibrary;
+            File currentPageFile;
+
+            WikiPageImplementation(web, wikiPageLibraryName, wikiPageName, out wikiPageUrl, out pageLibrary, out newWikiPageUrl, out currentPageFile, out pathAndQuery);
+
+            if (!currentPageFile.Exists)
+            {
+                var newpage = pageLibrary.RootFolder.Files.AddTemplateFile(newWikiPageUrl, TemplateFileType.WikiPage);
+                web.Context.Load(newpage);
+                web.Context.ExecuteQueryRetry();
+                wikiPageUrl = newpage.ServerRelativeUrl.Replace(pathAndQuery, "");
+            }
+            else
+            {
+                web.Context.Load(currentPageFile, s => s.ServerRelativeUrl);
+                web.Context.ExecuteQueryRetry();
+                wikiPageUrl = currentPageFile.ServerRelativeUrl.Replace(pathAndQuery, "");
+            }
+
+            return wikiPageUrl;
+        }
+
+        private static void WikiPageImplementation(Web web, string wikiPageLibraryName, string wikiPageName, out string wikiPageUrl, out List pageLibrary, out string newWikiPageUrl, out File currentPageFile, out string pathAndQuery)
+        {
             if (string.IsNullOrEmpty(wikiPageLibraryName))
             {
                 throw (wikiPageLibraryName == null)
@@ -769,32 +896,23 @@ namespace Microsoft.SharePoint.Client
                   : new ArgumentException(CoreResources.Exception_Message_EmptyString_Arg, "wikiPageName");
             }
 
-            string wikiPageUrl = "";
-
-            var pageLibrary = web.Lists.GetByTitle(wikiPageLibraryName);
-
+            wikiPageUrl = "";
+            pageLibrary = web.Lists.GetByTitle(wikiPageLibraryName);
+            web.Context.Load(web, w => w.Url);
             web.Context.Load(pageLibrary.RootFolder, f => f.ServerRelativeUrl);
             web.Context.ExecuteQueryRetry();
 
             var pageLibraryUrl = pageLibrary.RootFolder.ServerRelativeUrl;
-            var newWikiPageUrl = pageLibraryUrl + "/" + wikiPageName;
-
-            var currentPageFile = web.GetFileByServerRelativeUrl(newWikiPageUrl);
-
+            newWikiPageUrl = pageLibraryUrl + "/" + wikiPageName;
+            currentPageFile = web.GetFileByServerRelativeUrl(newWikiPageUrl);
             web.Context.Load(currentPageFile, f => f.Exists);
             web.Context.ExecuteQueryRetry();
 
-            if (!currentPageFile.Exists)
+            pathAndQuery = new Uri(web.Url).PathAndQuery;
+            if (!pathAndQuery.EndsWith("/"))
             {
-                var newpage = pageLibrary.RootFolder.Files.AddTemplateFile(newWikiPageUrl, TemplateFileType.WikiPage);
-
-                web.Context.Load(newpage);
-                web.Context.ExecuteQueryRetry();
-
-                wikiPageUrl = UrlUtility.Combine("sitepages", wikiPageName);
+                pathAndQuery = pathAndQuery + "/";
             }
-
-            return wikiPageUrl;
         }
 
         /// <summary>
@@ -1040,20 +1158,13 @@ namespace Microsoft.SharePoint.Client
                   : new ArgumentException(CoreResources.Exception_Message_EmptyString_Arg, "fileLeafRef");
             }
 
-            ClientContext context = web.Context as ClientContext;
-
-            // Get the language agnostic "Pages" library name
-            context.Load(web, l => l.Language);
+            var context = web.Context as ClientContext;
+            List pages = web.GetPagesLibrary();
+            // Get the language agnostic "Pages" library name         
+            context.Load(pages);
             context.ExecuteQueryRetry();
 
-            ClientResult<string> pagesLibraryName = Utility.GetLocalizedString(context, "$Resources:List_Pages_UrlName", "cmscore", (int)web.Language);
-            context.ExecuteQueryRetry();
-
-            List spList = web.Lists.GetByTitle(pagesLibraryName.Value);
-            context.Load(spList);
-            context.ExecuteQueryRetry();
-
-            if (spList != null && spList.ItemCount > 0)
+            if (pages != null && pages.ItemCount > 0)
             {
                 CamlQuery camlQuery = new CamlQuery();
                 camlQuery.ViewXml = string.Format(@"<View>  
@@ -1062,7 +1173,7 @@ namespace Microsoft.SharePoint.Client
                                                         </Query> 
                                                     </View>", fileLeafRef);
 
-                ListItemCollection listItems = spList.GetItems(camlQuery);
+                ListItemCollection listItems = pages.GetItems(camlQuery);
                 context.Load(listItems);
                 context.ExecuteQueryRetry();
 

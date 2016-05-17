@@ -39,46 +39,56 @@ namespace OfficeDevPnP.Core.Framework.Provisioning.ObjectHandlers
             }
         }
 
+        /// <summary>
+        /// Tokenize a template item url based attribute with {themecatalog} or {masterpagecatalog} or {site}+
+        /// </summary>
+        /// <param name="url">the url to tokenize as String</param>
+        /// <param name="webUrl">web url of the actual web as String</param>
+        /// <returns>tokenized url as String</returns>
         protected string Tokenize(string url, string webUrl)
         {
+            String result = null;
+
             if (string.IsNullOrEmpty(url))
             {
-                return "";
+                // nothing to tokenize...
+                result = String.Empty;
             }
             else
-            {
+            { 
+                // Try with theme catalog
                 if (url.IndexOf("/_catalogs/theme", StringComparison.InvariantCultureIgnoreCase) > -1)
                 {
-                    return url.Substring(url.IndexOf("/_catalogs/theme", StringComparison.InvariantCultureIgnoreCase)).Replace("/_catalogs/theme", "{themecatalog}");
+                    result = url.Substring(url.IndexOf("/_catalogs/theme", StringComparison.InvariantCultureIgnoreCase)).Replace("/_catalogs/theme", "{themecatalog}");
                 }
+
+                // Try with master page catalog
                 if (url.IndexOf("/_catalogs/masterpage", StringComparison.InvariantCultureIgnoreCase) > -1)
                 {
-                    return url.Substring(url.IndexOf("/_catalogs/masterpage", StringComparison.InvariantCultureIgnoreCase)).Replace("/_catalogs/masterpage", "{masterpagecatalog}");
+                    result = url.Substring(url.IndexOf("/_catalogs/masterpage", StringComparison.InvariantCultureIgnoreCase)).Replace("/_catalogs/masterpage", "{masterpagecatalog}");
                 }
-                if (url.IndexOf(webUrl, StringComparison.InvariantCultureIgnoreCase) > -1)
+
+                // Try with site URL
+                Uri uri;
+                if (Uri.TryCreate(webUrl, UriKind.Absolute, out uri))
                 {
-                    return url.Replace(webUrl, "{site}");
-                }
-                if (url.IndexOf(webUrl, StringComparison.InvariantCultureIgnoreCase) > -1)
-                {
-                    return url.Substring(url.IndexOf(webUrl, StringComparison.InvariantCultureIgnoreCase)).Replace(webUrl, "{site}");
-                }
-                else
-                {
-                    Uri r;
-                    if (Uri.TryCreate(webUrl, UriKind.Absolute, out r))
+                    string webUrlPathAndQuery = System.Web.HttpUtility.UrlDecode(uri.PathAndQuery);
+                    if (url.IndexOf(webUrlPathAndQuery, StringComparison.InvariantCultureIgnoreCase) > -1)
                     {
-                        var webUrlPathAndQuery = HttpUtility.UrlDecode(r.PathAndQuery);
-                        if (url.IndexOf(webUrlPathAndQuery, StringComparison.InvariantCultureIgnoreCase) > -1)
-                        {
-                            return url.Replace(webUrlPathAndQuery, "{site}");
-                        }
+                        result = (uri.PathAndQuery.Equals("/") && url.StartsWith(uri.PathAndQuery))
+                            ? "{site}" + url // we need this for DocumentTemplate attribute of pnp:ListInstance also on a root site ("/") without managed path
+                            : url.Replace(webUrlPathAndQuery, "{site}");
                     }
                 }
 
-                // nothing to tokenize...
-                return url;
+                // Default action
+                if (String.IsNullOrEmpty(result))
+                {
+                    result = url;
+                }
             }
-        }
+
+            return (result);
+        }        
     }
 }

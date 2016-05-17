@@ -119,6 +119,26 @@ namespace Microsoft.SharePoint.Client
         }
 
         /// <summary>
+        /// Removes a field by specifying its ID
+        /// </summary>
+        /// <param name="web"></param>
+        /// <param name="fieldId">The id of the field to remove</param>
+        public static void RemoveFieldById(this Web web, string fieldId)
+        {
+            Guid fieldGuid = new Guid(fieldId);
+            var fields = web.Context.LoadQuery(web.Fields.Where(f => f.Id == fieldGuid));
+            web.Context.ExecuteQueryRetry();
+
+            var enumerable = fields as Field[] ?? fields.ToArray();
+            if (!enumerable.Any())
+            {
+                throw new ArgumentException(string.Format("Could not find field with id {0}", fieldId));
+            }
+
+            enumerable.First().DeleteObject();
+        }
+
+        /// <summary>
         /// Creates fields from feature element xml file schema. XML file can contain one or many field definitions created using classic feature framework structure.
         /// </summary>
         /// <param name="web">Site to be processed - can be root web or sub site. Site columns should be created to root site.</param>
@@ -624,11 +644,11 @@ namespace Microsoft.SharePoint.Client
         /// <param name="contentTypeID">Complete ID for the content type</param>
         /// <param name="defaultContent">If set true, content type is updated to be default content type for the list</param>
         /// <param name="searchContentTypeInSiteHierarchy">search for content type in site hierarchy</param>
-        public static void AddContentTypeToListById(this List list, string contentTypeID, bool defaultContent = false, bool searchContentTypeInSiteHierarchy = false)
+        public static bool AddContentTypeToListById(this List list, string contentTypeID, bool defaultContent = false, bool searchContentTypeInSiteHierarchy = false)
         {
             var web = list.ParentWeb;
             var contentType = GetContentTypeById(web, contentTypeID, searchContentTypeInSiteHierarchy);
-            AddContentTypeToList(list, contentType, defaultContent);
+            return AddContentTypeToList(list, contentType, defaultContent);
         }
 
         /// <summary>
@@ -638,11 +658,11 @@ namespace Microsoft.SharePoint.Client
         /// <param name="contentTypeName">Name of the content type</param>
         /// <param name="defaultContent">If set true, content type is updated to be default content type for the list</param>
         /// <param name="searchContentTypeInSiteHierarchy">search for content type in site hierarchy</param>
-        public static void AddContentTypeToListByName(this List list, string contentTypeName, bool defaultContent = false, bool searchContentTypeInSiteHierarchy = false)
+        public static bool AddContentTypeToListByName(this List list, string contentTypeName, bool defaultContent = false, bool searchContentTypeInSiteHierarchy = false)
         {
             var web = list.ParentWeb;
             var contentType = GetContentTypeByName(web, contentTypeName, searchContentTypeInSiteHierarchy);
-            AddContentTypeToList(list, contentType, defaultContent);
+            return AddContentTypeToList(list, contentType, defaultContent);
         }
 
         /// <summary>
@@ -651,7 +671,7 @@ namespace Microsoft.SharePoint.Client
         /// <param name="list">List to add content type to</param>
         /// <param name="contentType">Content type to add to the list</param>
         /// <param name="defaultContent">If set true, content type is updated to be default content type for the list</param>
-        public static void AddContentTypeToList(this List list, ContentType contentType, bool defaultContent = false)
+        public static bool AddContentTypeToList(this List list, ContentType contentType, bool defaultContent = false)
         {
             if (contentType == null)
             {
@@ -660,7 +680,7 @@ namespace Microsoft.SharePoint.Client
 
             if (list.ContentTypeExistsById(contentType.Id.StringValue))
             {
-                return;
+                return false;
             }
 
             list.EnsureProperty(l => l.ContentTypesEnabled);
@@ -680,6 +700,7 @@ namespace Microsoft.SharePoint.Client
             {
                 SetDefaultContentTypeToList(list, contentType);
             }
+            return true;
         }
 
         /// <summary>
@@ -744,7 +765,7 @@ namespace Microsoft.SharePoint.Client
 
             // Ensure other content-type properties
             contentType.EnsureProperties(c => c.Id, c => c.SchemaXml, c => c.FieldLinks.Include(fl => fl.Id, fl => fl.Required, fl => fl.Hidden));
-            field.EnsureProperties(f => f.Id, f => f.SchemaXml);
+            field.EnsureProperties(f => f.Id, f => f.SchemaXmlWithResourceTokens);
 
             Log.Info(Constants.LOGGING_SOURCE, CoreResources.FieldAndContentTypeExtensions_AddField0ToContentType1, field.Id, contentType.Id);
 
@@ -753,7 +774,7 @@ namespace Microsoft.SharePoint.Client
             var flink = contentType.FieldLinks.FirstOrDefault(fld => fld.Id == field.Id);
             if (flink == null)
             {
-                XElement fieldElement = XElement.Parse(field.SchemaXml);
+                XElement fieldElement = XElement.Parse(field.SchemaXmlWithResourceTokens);
                 fieldElement.SetAttributeValue("AllowDeletion", "TRUE"); // Default behavior when adding a field to a CT from the UI.
                 field.SchemaXml = fieldElement.ToString();
                 var fldInfo = new FieldLinkCreationInformation();
@@ -769,7 +790,7 @@ namespace Microsoft.SharePoint.Client
             flink.EnsureProperties(f => f.Required, f => f.Hidden);
 
             if ((required != flink.Required) || (hidden != flink.Hidden))
-			{
+            {
                 // Update FieldLink
                 flink.Required = required;
                 flink.Hidden = hidden;
@@ -1203,6 +1224,30 @@ namespace Microsoft.SharePoint.Client
         }
 
         /// <summary>
+        /// Searches for the content type with the closest match to the value of the specified content type ID. 
+        /// If the search finds two matches, the shorter ID is returned. 
+        /// </summary>
+        /// <param name="contentTypes">Content type collection to search</param>
+        /// <param name="contentTypeId">Complete ID for the content type to search</param>
+        /// <returns>Content type Id object or null if was not found</returns>
+        public static ContentTypeId BestMatch(this ContentTypeCollection contentTypes, string contentTypeId)
+        {
+            if (string.IsNullOrEmpty(contentTypeId))
+            {
+                throw new ArgumentNullException("contentTypeId");
+            }
+            var ctx = contentTypes.Context;
+            contentTypes.EnsureProperties(c => c.Include(ct => ct.Id));
+
+            var res = contentTypes.Where(c => c.Id.StringValue.StartsWith(contentTypeId)).OrderBy(c => c.Id.StringValue.Length).FirstOrDefault();
+            if (res != null)
+            {
+                return res.Id;
+            }
+            return null;
+        }
+
+        /// <summary>
         /// Removes content type from list
         /// </summary>
         /// <param name="web">Site to be processed - can be root web or sub site</param>
@@ -1453,7 +1498,7 @@ namespace Microsoft.SharePoint.Client
         /// <param name="descriptionResource">Localized value for the Description property</param>
         public static void SetLocalizationForContentType(this ContentType contentType, string cultureName, string nameResource, string descriptionResource)
         {
-            if (contentType.IsObjectPropertyInstantiated("TitleResource"))
+            if (!contentType.IsObjectPropertyInstantiated("NameResource"))
             {
                 contentType.Context.Load(contentType);
                 contentType.Context.ExecuteQueryRetry();

@@ -6,6 +6,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using OfficeDevPnP.Core.Framework.Provisioning.Model;
 using OfficeDevPnP.Core.Framework.Provisioning.ObjectHandlers;
 using WebPart = OfficeDevPnP.Core.Framework.Provisioning.Model.WebPart;
+using OfficeDevPnP.Core.Utilities;
 
 namespace OfficeDevPnP.Core.Tests.Framework.ObjectHandlers
 {
@@ -115,7 +116,7 @@ alert(""Hello!"");
                 var template = new ProvisioningTemplate();
                 template = new ObjectPages().ExtractObjects(ctx.Web, template, creationInfo);
 
-                Assert.IsInstanceOfType(template.Pages, typeof(List<Core.Framework.Provisioning.Model.Page>));
+                Assert.IsInstanceOfType(template.Pages, typeof(PageCollection));
             }
         }
     }
