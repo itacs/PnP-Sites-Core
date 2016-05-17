@@ -15,5 +15,7 @@
         public string BackgroundImage { get; set; }
 
         public string Font { get; set; }
+        public int ID { get; set; }
+        public int DisplayOrder { get; set; }
     }
 }

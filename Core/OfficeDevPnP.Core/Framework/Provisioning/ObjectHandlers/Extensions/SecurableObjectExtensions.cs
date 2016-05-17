@@ -34,15 +34,15 @@ namespace OfficeDevPnP.Core.Framework.Provisioning.ObjectHandlers.Extensions
                     principal = context.Web.EnsureUser(roleAssignment.Principal);
                 }
 
-                var roleDefinitionBindingCollection = new RoleDefinitionBindingCollection(context);
+                // MI: Fix for the infamous "cannot add a role assignment with empty role definition binding collection" error
 
                 var roleDefinition = webRoleDefinitions.FirstOrDefault(r => r.Name == roleAssignment.RoleDefinition);
-
                 if (roleDefinition != null)
                 {
+                    var roleDefinitionBindingCollection = new RoleDefinitionBindingCollection(context);
                     roleDefinitionBindingCollection.Add(roleDefinition);
+                    securable.RoleAssignments.Add(principal, roleDefinitionBindingCollection);
                 }
-                securable.RoleAssignments.Add(principal, roleDefinitionBindingCollection);
             }
             context.ExecuteQueryRetry();
             //}

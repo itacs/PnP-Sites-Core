@@ -223,15 +223,17 @@ namespace OfficeDevPnP.Core.Framework.Provisioning.ObjectHandlers
                                 principal = web.EnsureUser(parser.ParseString(roleAssignment.Principal));
                             }
 
-                            var roleDefinitionBindingCollection = new RoleDefinitionBindingCollection(web.Context);
+                            // MI: Fix for the infamous "cannot add a role assignment with empty role definition binding collection" error
+                            // problem here is multi-language, the role definition name can be in any language so a fitting role definition is not always found
 
-                            var roleDefinition = webRoleDefinitions.FirstOrDefault(r => r.Name == roleAssignment.RoleDefinition);
+                            var roleDefinition = webRoleDefinitions.FirstOrDefault(r => (r.Name == roleAssignment.RoleDefinition ));
 
                             if (roleDefinition != null)
                             {
+                                var roleDefinitionBindingCollection = new RoleDefinitionBindingCollection(web.Context);
                                 roleDefinitionBindingCollection.Add(roleDefinition);
+                                web.RoleAssignments.Add(principal, roleDefinitionBindingCollection);
                             }
-                            web.RoleAssignments.Add(principal, roleDefinitionBindingCollection);
                             web.Context.ExecuteQueryRetry();
                         }
                     }
